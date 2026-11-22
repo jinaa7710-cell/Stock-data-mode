@@ -20,7 +20,6 @@
     <button class="active" data-tab="data" onclick="showPage('data', this)">Daily stock data</button>
     <button data-tab="update" onclick="showPage('update', this)">Daily stock update</button>
     <button data-tab="godown" onclick="showPage('godown', this)">Godown</button>
-    <button data-tab="police" onclick="showPage('police', this)">Police stock</button>
   </div>
 
   <div class="days" id="days" role="tablist" aria-label="Select day"></div>
@@ -161,35 +160,6 @@
         </button>
       </div>
       <div id="historyList"></div>
-    </div>
-  </section>
-
-  <!-- POLICE STOCK -->
-  <section id="police" class="hidden" role="tabpanel">
-    <div class="card">
-      <h3>Police stock</h3>
-      <p class="hint">Available = current stock. Total = Available + Used (all-time).</p>
-      <div class="search-bar">
-        <input id="policeSearch" type="text" placeholder="Search police items…"
-               autocomplete="off"
-               oninput="onPoliceSearch(this.value)">
-        <button class="search-clear hidden" id="policeSearchClear"
-                aria-label="Clear search" onclick="clearPoliceSearch()">✕</button>
-      </div>
-      <div id="policeList"></div>
-    </div>
-
-    <div class="card">
-      <h3>Add new police item</h3>
-      <div class="add">
-        <input id="policeName" type="text" placeholder="Item name" maxlength="60"
-               onkeydown="if(event.key==='Enter')addPoliceItem()">
-        <input id="policeQty" type="number" min="1" step="1" placeholder="QTY"
-               inputmode="numeric"
-               onkeydown="if(event.key==='Enter')addPoliceItem()">
-        <button onclick="addPoliceItem()">Add</button>
-      </div>
-      <div class="unit-picker" id="policeUnitPicker"></div>
     </div>
   </section>
 </div>
