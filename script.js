@@ -62,15 +62,13 @@ const defaultItems = [
 const todayName = weekdays[new Date().getDay()];
 let selectedDay = todayName;
 let selectedUnit = "pack";
-let selectedPoliceUnit = "pack";
 
-let stock = { days: {}, godown: [], police: [] };
+let stock = { days: {}, godown: [] };
 let shipment = [];
 let shipmentMeta = { supplier: "", date: "", notes: "" };
 let shipmentHistory = [];
 let activeHistoryId = null;
 let godownFilter = "";
-let policeFilter = "";
 
 function makeEmptyDay() {
   return { catalog: [], items: [] };
@@ -81,7 +79,7 @@ function nameKey(name) {
 }
 
 function sanitizeStock(parsed) {
-  const fresh = { days: {}, godown: [], police: [], shipment: [], shipmentMeta: {}, shipmentHistory: [] };
+  const fresh = { days: {}, godown: [], shipment: [], shipmentMeta: {}, shipmentHistory: [] };
   weekdays.forEach(d => (fresh.days[d] = makeEmptyDay()));
 
   if (!parsed || typeof parsed !== "object") {
@@ -114,26 +112,22 @@ function sanitizeStock(parsed) {
     weekdays.forEach(day => (fresh.days[day].catalog = [...defaultItems]));
   }
 
-  const sanitizeLedger = arr =>
-    Array.isArray(arr)
-      ? arr
-          .filter(g =>
-            g &&
-            typeof g.name === "string" &&
-            Number.isFinite(g.base) &&
-            g.base >= 0 &&
-            UNITS.includes(g.unit)
-          )
-          .map(g => ({
-            name: g.name,
-            unit: g.unit,
-            base: Math.floor(g.base),
-            used: Math.max(0, Math.floor(g.used || 0))
-          }))
-      : [];
-
-  fresh.godown = sanitizeLedger(parsed.godown);
-  fresh.police = sanitizeLedger(parsed.police);
+  fresh.godown = Array.isArray(parsed.godown)
+    ? parsed.godown
+        .filter(g =>
+          g &&
+          typeof g.name === "string" &&
+          Number.isFinite(g.base) &&
+          g.base >= 0 &&
+          UNITS.includes(g.unit)
+        )
+        .map(g => ({
+          name: g.name,
+          unit: g.unit,
+          base: Math.floor(g.base),
+          used: Math.max(0, Math.floor(g.used || 0))
+        }))
+    : [];
 
   fresh.shipment = Array.isArray(parsed.shipment)
     ? parsed.shipment
@@ -741,151 +735,7 @@ window.deleteGodownItem = function (i) {
 };
 
 /* ============================================================
-   RENDER: POLICE STOCK (mirror of Godown)
-   ============================================================ */
-function findPolice(name) {
-  const key = nameKey(name);
-  return stock.police.find(g => nameKey(g.name) === key);
-}
-
-function renderPolice() {
-  const wrap = document.getElementById("policeList");
-  if (!wrap) return;
-
-  const filter = policeFilter.toLowerCase();
-  const visible = filter
-    ? stock.police
-        .map((g, i) => ({ g, i }))
-        .filter(({ g }) => g.name.toLowerCase().includes(filter))
-    : stock.police.map((g, i) => ({ g, i }));
-
-  const clearBtn = document.getElementById("policeSearchClear");
-  if (clearBtn) clearBtn.classList.toggle("hidden", filter === "");
-
-  if (stock.police.length === 0) {
-    wrap.innerHTML = `<div class="empty">No police items yet. Add one below.</div>`;
-    renderPoliceUnitPicker();
-    return;
-  }
-
-  if (visible.length === 0) {
-    wrap.innerHTML = `<div class="empty">No items match "<strong>${escapeHTML(policeFilter)}</strong>".</div>`;
-    renderPoliceUnitPicker();
-    return;
-  }
-
-  const header = `
-    <div class="godown-row godown-header">
-      <span class="g-name">Item</span>
-      <span class="g-unit">Unit</span>
-      <span class="g-num">Total</span>
-      <span class="g-num">Used</span>
-      <span class="g-num">Avail</span>
-      <span></span>
-    </div>`;
-
-  const rows = visible.map(({ g, i }) => `
-    <div class="godown-row">
-      <span class="g-name">${escapeHTML(g.name)}</span>
-      <span class="g-unit">${escapeHTML(g.unit)}</span>
-      <span class="g-num">${g.base + g.used}</span>
-      <span class="g-num used">${g.used}</span>
-      <span class="g-num avail">${g.base}</span>
-      <button class="btn-del" title="Delete ${escapeAttr(g.name)}"
-              aria-label="Delete ${escapeAttr(g.name)}"
-              onclick="deletePoliceItem(${i})">✕</button>
-      <div class="restock">
-        <input type="number" id="policeRestock${i}" min="1" step="1"
-               inputmode="numeric" placeholder="Restock qty"
-               onkeydown="if(event.key==='Enter')restockPolice(${i})">
-        <button onclick="restockPolice(${i})">Restock</button>
-      </div>
-    </div>`).join("");
-
-  wrap.innerHTML = header + rows;
-  renderPoliceUnitPicker();
-}
-
-window.onPoliceSearch = function (value) {
-  policeFilter = String(value || "").trim();
-  const clearBtn = document.getElementById("policeSearchClear");
-  if (clearBtn) clearBtn.classList.toggle("hidden", policeFilter === "");
-  renderPolice();
-};
-
-window.clearPoliceSearch = function () {
-  policeFilter = "";
-  const input = document.getElementById("policeSearch");
-  if (input) { input.value = ""; input.focus(); }
-  const clearBtn = document.getElementById("policeSearchClear");
-  if (clearBtn) clearBtn.classList.add("hidden");
-  renderPolice();
-};
-
-function renderPoliceUnitPicker() {
-  const wrap = document.getElementById("policeUnitPicker");
-  if (!wrap) return;
-  wrap.innerHTML = UNITS.map(u => `
-    <button class="${u === selectedPoliceUnit ? "active" : ""}"
-            onclick="pickPoliceUnit('${u}')">${u}</button>
-  `).join("");
-}
-
-window.pickPoliceUnit = function (u) {
-  selectedPoliceUnit = u;
-  renderPoliceUnitPicker();
-};
-
-window.addPoliceItem = function () {
-  const nameEl = document.getElementById("policeName");
-  const qtyEl = document.getElementById("policeQty");
-  const name = nameEl.value.trim();
-  const qty = Number(qtyEl.value);
-  if (!name) { toast("Enter an item name"); return; }
-  if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
-    toast("Enter a valid positive quantity");
-    return;
-  }
-  if (!UNITS.includes(selectedPoliceUnit)) { toast("Pick a unit"); return; }
-  if (findPolice(name)) {
-    toast(`"${name}" already in police stock — use Restock`);
-    return;
-  }
-  stock.police.push({ name, unit: selectedPoliceUnit, base: qty, used: 0 });
-  save();
-  nameEl.value = "";
-  qtyEl.value = "";
-  renderPolice();
-  toast(`Added "${name}" (${qty} ${selectedPoliceUnit})`);
-};
-
-window.restockPolice = function (i) {
-  const g = stock.police[i];
-  if (!g) return;
-  const input = document.getElementById(`policeRestock${i}`);
-  const qty = Number(input.value);
-  if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
-    toast("Enter a valid restock quantity");
-    return;
-  }
-  g.base += qty;
-  save();
-  renderPolice();
-  toast(`Restocked ${qty} ${g.unit}(s) of "${g.name}"`);
-};
-
-window.deletePoliceItem = function (i) {
-  const g = stock.police[i];
-  if (!g) return;
-  if (!confirm(`Delete "${g.name}" from police stock?`)) return;
-  stock.police.splice(i, 1);
-  save();
-  renderPolice();
-  toast(`Deleted "${g.name}"`);
-};
-
-/* ============================================================
-   SHIPMENT (unchanged — only applies to Godown items)
+   SHIPMENT
    ============================================================ */
 function renderShipment() {
   const wrap = document.getElementById("shipmentList");
@@ -1307,7 +1157,6 @@ window.showPage = function (page, button) {
   document.getElementById("data").classList.toggle("hidden", page !== "data");
   document.getElementById("update").classList.toggle("hidden", page !== "update");
   document.getElementById("godown").classList.toggle("hidden", page !== "godown");
-  document.getElementById("police").classList.toggle("hidden", page !== "police");
   document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
   if (button) button.classList.add("active");
 };
@@ -1334,7 +1183,6 @@ function render() {
   renderCatalog();
   renderUpdate();
   renderGodown();
-  renderPolice();
   renderShipment();
   renderHistory();
 }
@@ -1365,10 +1213,9 @@ function render() {
       renderDays();
       renderUpdate();
       renderGodown();
-      renderPolice();
       renderCatalog();
       renderShipment();
       renderHistory();
     }
   });
-})(); 
+})();
