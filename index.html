@@ -28,7 +28,14 @@
   <section id="data" role="tabpanel">
     <div class="card">
       <h3>Stock item list <span id="catalogDayBadge" class="badge"></span></h3>
-      <p class="hint">Tick an item &amp; enter a quantity, then add to the day. Re-adding an existing item merges quantities.</p>
+      <p class="hint">Tick an item &amp; enter a quantity, then add to the day. Re-adding an existing item merges quantities. Godown items appear here automatically.</p>
+      <div class="search-bar">
+        <input id="catalogSearch" type="text" placeholder="Search items…"
+               autocomplete="off"
+               oninput="onCatalogSearch(this.value)">
+        <button class="search-clear hidden" id="catalogSearchClear"
+                aria-label="Clear search" onclick="clearCatalogSearch()">✕</button>
+      </div>
       <div id="catalog"></div>
       <button class="primary" id="addSelectedBtn" onclick="addSelected()" disabled>
         Add selected items to daily update →
@@ -53,11 +60,11 @@
       <div class="summary-bar">
         <div class="stat done">
           <div class="num" id="statCollected">0</div>
-          <div class="lbl">Collected</div>
+          <div class="lbl">Items collected</div>
         </div>
         <div class="stat">
           <div class="num" id="statTotal">0</div>
-          <div class="lbl">Total</div>
+          <div class="lbl">Items total</div>
         </div>
         <div class="stat rem">
           <div class="num" id="statRemaining">0</div>
@@ -85,7 +92,7 @@
   <section id="godown" class="hidden" role="tabpanel">
     <div class="card">
       <h3>Godown stock</h3>
-      <p class="hint">Available = current stock. Total = Available + Used (all-time).</p>
+      <p class="hint">Available = current stock. Total = Available + Used (all-time). Use the ⚙ button to set a pack (e.g. 12 bottles per case).</p>
       <div class="search-bar">
         <input id="godownSearch" type="text" placeholder="Search godown items…"
                autocomplete="off"
@@ -107,6 +114,21 @@
         <button onclick="addGodownItem()">Add</button>
       </div>
       <div class="unit-picker" id="godownUnitPicker"></div>
+      <p class="hint" style="margin-top:8px;">Base unit — the smallest unit stock is counted in.</p>
+
+      <div class="pack-picker">
+        <label class="pack-field">
+          <span>Pack unit (optional)</span>
+          <select id="godownPackUnit" onchange="onGodownPackUnitChange()">
+            <option value="">— none —</option>
+          </select>
+        </label>
+        <label class="pack-field">
+          <span>Pieces per pack</span>
+          <input id="godownPackSize" type="number" min="2" step="1" inputmode="numeric"
+                 placeholder="e.g. 12" disabled>
+        </label>
+      </div>
     </div>
 
     <div class="card" id="shipmentCard">
@@ -166,7 +188,7 @@
 
 <!-- Shipment detail modal -->
 <div class="modal-backdrop hidden" id="historyModal" onclick="if(event.target===this)closeHistoryModal()">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true">
     <div class="modal-head">
       <h3 id="modalTitle">Shipment</h3>
       <button class="btn-del" onclick="closeHistoryModal()" aria-label="Close">✕</button>
