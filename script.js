@@ -49,8 +49,19 @@ const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 const UNITS = ["can", "bag", "pack", "bottle", "case", "dozen", "bundle", "piece"];
 
 const defaultItems = [
-  "Black coffee", "Yeye coffee", "Coast milk", "Cereal",
-  "Corn flakes", "Chocos", "Packet milk", "Packet juice"
+  "Black coffee", "YeYe coffee", "Coast milk", "Cereal", "Corn flakes", "Chocos", "Honey", 
+  "Peanut butter", "Crumpy", "Jam", "Cream Crackers", "Packet juice", "Packet milk", "Coke", 
+  "XL(small)", "Bitter lemon", "Becool juice", "Orange", "Apple", "Watermelon", "Pumpkin", 
+  "Papaya", "Chilli powder", "Chicken curry powder", "Dry chilli", "Tissue (small)", 
+  "Tissue (medium)", "Kitchen tissue", "Tissue box", "Disposable cup", "Garlic", "Ginger", 
+  "Egg", "Noodle", "Spaghetti", "Tuna chunks in oil", "Green peas", "Chilli sauce", 
+  "Chilli and garlic sauce", "Tomato sauce", "Soya sauce", "Oyster sauce", "Tomato paste", 
+  "Vanilla essence", "Salt", "Corn flour", "Baking powder", "Margarine", "Basmati rice", 
+  "Dal", "Aj no moto", "Butter", "Cheese", "Whole chicken", "Chicken breast", 
+  "Chicken drumsticks", "Snickers", "Plain yoghurt", "Flavour yoghurt", "Butter chicken", 
+  "Biryani", "Atta", "Black tea", "Condensed milk", "Fruit cocktail", "Apollo chocolate cake", 
+  "Apollo pandan", "Toothpick", "Mama", "Hand wash", "Gloves", "Fresh tomatoes", 
+  "Baked beans", "Onions", "Potato", "Cooking oil", "Beef", "Parata", "Chilli", "Lemon"
 ];
 
 const todayName = weekdays[new Date().getDay()];
@@ -271,6 +282,33 @@ function refundGodown(name, amount) {
   g.used -= refund;
   g.base += refund;
 }
+
+/* ============================================================
+   BULK ADD ITEMS
+   ============================================================ */
+window.bulkAddItemsToAllDays = function() {
+  if (!confirm("This will add all 80+ items to every day's catalog. Proceed?")) return;
+  
+  weekdays.forEach(day => {
+    const dayData = stock.days[day];
+    if (!dayData) return;
+    
+    const existing = new Set(dayData.catalog.map(n => nameKey(n)));
+    
+    defaultItems.forEach(item => {
+      const key = nameKey(item);
+      if (!existing.has(key)) {
+        dayData.catalog.push(item);
+        existing.add(key);
+      }
+    });
+  });
+
+  save();
+  renderCatalog();
+  renderDays();
+  toast("✅ Loaded all items into every day!");
+};
 
 /* ============================================================
    RENDER: DAYS
