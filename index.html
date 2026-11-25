@@ -27,7 +27,10 @@
   <!-- STOCK DATA -->
   <section id="data" role="tabpanel">
     <div class="card">
-      <h3>Stock item list <span id="catalogDayBadge" class="badge"></span></h3>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>Stock item list <span id="catalogDayBadge" class="badge"></span></h3>
+        <button class="btn-ghost" style="padding:6px 10px; font-size:12px;" onclick="bulkAddItemsToAllDays()">⚡ Load All Items</button>
+      </div>
       <p class="hint">Tick an item &amp; enter a quantity, then add to the day. Re-adding an existing item merges quantities. Godown items appear here automatically.</p>
       <div class="search-bar">
         <input id="catalogSearch" type="text" placeholder="Search items…"
