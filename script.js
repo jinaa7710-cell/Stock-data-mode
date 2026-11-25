@@ -49,14 +49,8 @@ const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 const UNITS = ["can", "bag", "pack", "bottle", "case", "dozen", "bundle", "piece"];
 
 const defaultItems = [
-  "Black coffee",
-  "Yeye coffee",
-  "Coast milk",
-  "Cereal",
-  "Corn flakes",
-  "Chocos",
-  "Packet milk",
-  "Packet juice"
+  "Black coffee", "Yeye coffee", "Coast milk", "Cereal",
+  "Corn flakes", "Chocos", "Packet milk", "Packet juice"
 ];
 
 const todayName = weekdays[new Date().getDay()];
@@ -69,9 +63,10 @@ let shipmentMeta = { supplier: "", date: "", notes: "" };
 let shipmentHistory = [];
 let activeHistoryId = null;
 let godownFilter = "";
+let catalogFilter = "";
 
 function makeEmptyDay() {
-  return { catalog: [], items: [] };
+  return { catalog: [], items: [], hidden: [] };
 }
 
 function nameKey(name) {
@@ -92,19 +87,16 @@ function sanitizeStock(parsed) {
       const d = parsed.days[day];
       if (d && typeof d === "object") {
         fresh.days[day] = {
-          catalog: Array.isArray(d.catalog)
-            ? d.catalog.filter(x => typeof x === "string")
-            : [],
+          catalog: Array.isArray(d.catalog) ? d.catalog.filter(x => typeof x === "string") : [],
           items: Array.isArray(d.items)
-            ? d.items
-                .filter(it => it && typeof it.name === "string")
-                .map(it => ({
-                  id: typeof it.id === "string" ? it.id : uid(),
-                  name: it.name,
-                  qty: Number.isFinite(Number(it.qty)) ? Math.floor(Number(it.qty)) : 0,
-                  collected: !!it.collected
-                }))
-            : []
+            ? d.items.filter(it => it && typeof it.name === "string").map(it => ({
+                id: typeof it.id === "string" ? it.id : uid(),
+                name: it.name,
+                qty: Number.isFinite(Number(it.qty)) ? Math.floor(Number(it.qty)) : 0,
+                collected: !!it.collected
+              }))
+            : [],
+          hidden: Array.isArray(d.hidden) ? d.hidden.filter(x => typeof x === "string") : []
         };
       }
     });
@@ -112,34 +104,28 @@ function sanitizeStock(parsed) {
     weekdays.forEach(day => (fresh.days[day].catalog = [...defaultItems]));
   }
 
-  fresh.godown = Array.isArray(parsed.godown)
-    ? parsed.godown
-        .filter(g =>
-          g &&
-          typeof g.name === "string" &&
-          Number.isFinite(g.base) &&
-          g.base >= 0 &&
-          UNITS.includes(g.unit)
-        )
-        .map(g => ({
-          name: g.name,
-          unit: g.unit,
-          base: Math.floor(g.base),
-          used: Math.max(0, Math.floor(g.used || 0))
-        }))
-    : [];
+  const sanitizeLedger = arr =>
+    Array.isArray(arr)
+      ? arr.filter(g => g && typeof g.name === "string" && Number.isFinite(g.base) && g.base >= 0 && UNITS.includes(g.unit))
+          .map(g => {
+            const packSize = Number.isFinite(Number(g.packSize)) ? Math.max(0, Math.floor(Number(g.packSize))) : 0;
+            const packUnit = typeof g.packUnit === "string" && UNITS.includes(g.packUnit) ? g.packUnit : "";
+            return {
+              name: g.name,
+              unit: g.unit,
+              packUnit: packUnit && packSize >= 2 ? packUnit : "",
+              packSize: packUnit && packSize >= 2 ? packSize : 0,
+              base: Math.floor(g.base),
+              used: Math.max(0, Math.floor(g.used || 0))
+            };
+          })
+      : [];
+
+  fresh.godown = sanitizeLedger(parsed.godown);
 
   fresh.shipment = Array.isArray(parsed.shipment)
-    ? parsed.shipment
-        .filter(s =>
-          s && typeof s.name === "string" &&
-          Number.isFinite(Number(s.qty)) && Number(s.qty) > 0
-        )
-        .map(s => ({
-          name: s.name,
-          qty: Math.floor(Number(s.qty)),
-          unit: UNITS.includes(s.unit) ? s.unit : "piece"
-        }))
+    ? parsed.shipment.filter(s => s && typeof s.name === "string" && Number.isFinite(Number(s.qty)) && Number(s.qty) > 0)
+        .map(s => ({ name: s.name, qty: Math.floor(Number(s.qty)), unit: UNITS.includes(s.unit) ? s.unit : "piece" }))
     : [];
 
   fresh.shipmentMeta = parsed.shipmentMeta && typeof parsed.shipmentMeta === "object"
@@ -151,21 +137,15 @@ function sanitizeStock(parsed) {
     : { supplier: "", date: "", notes: "" };
 
   fresh.shipmentHistory = Array.isArray(parsed.shipmentHistory)
-    ? parsed.shipmentHistory
-        .filter(h => h && typeof h.id === "string" && Array.isArray(h.items))
+    ? parsed.shipmentHistory.filter(h => h && typeof h.id === "string" && Array.isArray(h.items))
         .map(h => ({
           id: h.id,
           supplier: typeof h.supplier === "string" ? h.supplier : "",
           date: typeof h.date === "string" ? h.date : "",
           notes: typeof h.notes === "string" ? h.notes : "",
           shippedAt: typeof h.shippedAt === "string" ? h.shippedAt : new Date().toISOString(),
-          items: h.items
-            .filter(it => it && typeof it.name === "string" && Number.isFinite(Number(it.qty)))
-            .map(it => ({
-              name: it.name,
-              qty: Math.floor(Number(it.qty)),
-              unit: UNITS.includes(it.unit) ? it.unit : "piece"
-            }))
+          items: h.items.filter(it => it && typeof it.name === "string" && Number.isFinite(Number(it.qty)))
+            .map(it => ({ name: it.name, qty: Math.floor(Number(it.qty)), unit: UNITS.includes(it.unit) ? it.unit : "piece" }))
         }))
     : [];
 
@@ -224,6 +204,18 @@ function currentDay() {
 function dayItems() { return currentDay().items; }
 function dayCatalog() { return currentDay().catalog; }
 
+function syncCatalogFromGodown() {
+  const day = currentDay();
+  const hidden = new Set((day.hidden || []).map(nameKey));
+  const have = new Set(day.catalog.map(nameKey));
+  stock.godown.forEach(g => {
+    const k = nameKey(g.name);
+    if (hidden.has(k) || have.has(k)) return;
+    day.catalog.push(g.name);
+    have.add(k);
+  });
+}
+
 let toastTimer = null;
 function toast(msg) {
   const el = document.getElementById("toast");
@@ -234,9 +226,26 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
 }
 
-/* ============================================================
-   GODOWN HELPERS
-   ============================================================ */
+function itemHasPack(item) {
+  return !!(item && item.packUnit && item.packSize >= 2);
+}
+
+function formatQty(baseUnits, item) {
+  const n = Math.max(0, Math.floor(baseUnits));
+  if (!itemHasPack(item)) return `${n} ${item?.unit || ""}`.trim();
+  const packs = Math.floor(n / item.packSize);
+  const rem   = n % item.packSize;
+  if (packs === 0) return `${rem} ${item.unit}`;
+  if (rem === 0)   return `${packs} ${item.packUnit}`;
+  return `${packs} ${item.packUnit} + ${rem} ${item.unit}`;
+}
+
+function toBaseQty(qty, unit, item) {
+  const n = Math.max(0, Math.floor(Number(qty) || 0));
+  if (itemHasPack(item) && unit === item.packUnit) return n * item.packSize;
+  return n;
+}
+
 function findGodown(name) {
   const key = nameKey(name);
   return stock.godown.find(g => nameKey(g.name) === key);
@@ -284,6 +293,12 @@ function renderDays() {
 window.changeDay = function (day) {
   selectedDay = day;
   catalogUI = [];
+  catalogFilter = "";
+  const input = document.getElementById("catalogSearch");
+  if (input) input.value = "";
+  const clearBtn = document.getElementById("catalogSearchClear");
+  if (clearBtn) clearBtn.classList.add("hidden");
+  syncCatalogFromGodown();
   render();
 };
 
@@ -301,10 +316,20 @@ function syncCatalogUI() {
 }
 
 function renderCatalog() {
+  syncCatalogFromGodown();
   syncCatalogUI();
+  
   const wrap = document.getElementById("catalog");
   if (!wrap) return;
   document.getElementById("catalogDayBadge").textContent = selectedDay;
+
+  const clearBtn = document.getElementById("catalogSearchClear");
+  if (clearBtn) clearBtn.classList.toggle("hidden", catalogFilter === "");
+
+  const filter = catalogFilter.toLowerCase();
+  const visibleIdx = dayCatalog()
+    .map((name, i) => ({ name, i }))
+    .filter(({ name }) => filter === "" || name.toLowerCase().includes(filter));
 
   if (dayCatalog().length === 0) {
     wrap.innerHTML = `<div class="empty">No items for ${selectedDay} yet. Add one below.</div>`;
@@ -312,14 +337,20 @@ function renderCatalog() {
     return;
   }
 
+  if (visibleIdx.length === 0) {
+    wrap.innerHTML = `<div class="empty">No items match "<strong>${escapeHTML(catalogFilter)}</strong>".</div>`;
+    updateAddSelectedBtn();
+    return;
+  }
+
   const alreadyOnDay = new Set(dayItems().map(i => nameKey(i.name)));
 
-  wrap.innerHTML = dayCatalog().map((name, i) => {
+  wrap.innerHTML = visibleIdx.map(({ name, i }) => {
     const onDay = alreadyOnDay.has(nameKey(name));
     return `
       <div class="item" data-idx="${i}">
         <input type="checkbox" id="check${i}"
-               ${catalogUI[i].checked ? "checked" : ""}
+               ${catalogUI[i]?.checked ? "checked" : ""}
                onchange="onCheckChange(${i}, this.checked)">
         <span class="name">
           ${escapeHTML(name)}
@@ -327,7 +358,7 @@ function renderCatalog() {
         </span>
         <input type="number" id="qty${i}" min="0" step="1"
                inputmode="numeric" placeholder="QTY"
-               value="${escapeAttr(catalogUI[i].qty)}"
+               value="${escapeAttr(catalogUI[i]?.qty ?? "")}"
                oninput="onQtyInput(${i}, this.value)">
         <button class="btn-del" title="Remove ${escapeAttr(name)} from ${escapeAttr(selectedDay)}"
                 aria-label="Remove ${escapeAttr(name)}"
@@ -337,6 +368,22 @@ function renderCatalog() {
 
   updateAddSelectedBtn();
 }
+
+window.onCatalogSearch = function (value) {
+  catalogFilter = String(value || "").trim();
+  const clearBtn = document.getElementById("catalogSearchClear");
+  if (clearBtn) clearBtn.classList.toggle("hidden", catalogFilter === "");
+  renderCatalog();
+};
+
+window.clearCatalogSearch = function () {
+  catalogFilter = "";
+  const input = document.getElementById("catalogSearch");
+  if (input) { input.value = ""; input.focus(); }
+  const clearBtn = document.getElementById("catalogSearchClear");
+  if (clearBtn) clearBtn.classList.add("hidden");
+  renderCatalog();
+};
 
 window.onCheckChange = function (i, checked) {
   if (catalogUI[i]) catalogUI[i].checked = checked;
@@ -366,6 +413,10 @@ window.addItem = function () {
     return;
   }
   dayCatalog().push(name);
+  const day = currentDay();
+  if (Array.isArray(day.hidden)) {
+    day.hidden = day.hidden.filter(n => nameKey(n) !== nameKey(name));
+  }
   save();
   input.value = "";
   renderCatalog();
@@ -375,9 +426,14 @@ window.addItem = function () {
 window.deleteCatalogItem = function (i) {
   const name = dayCatalog()[i];
   if (name == null) return;
-  dayCatalog().splice(i, 1);
 
   const day = currentDay();
+  day.catalog.splice(i, 1);
+  if (!Array.isArray(day.hidden)) day.hidden = [];
+  if (!day.hidden.some(n => nameKey(n) === nameKey(name))) {
+    day.hidden.push(name);
+  }
+
   const toRemove = day.items.filter(it => nameKey(it.name) === nameKey(name));
   toRemove.forEach(it => {
     if (it.collected) refundGodown(it.name, it.qty);
@@ -390,19 +446,11 @@ window.deleteCatalogItem = function (i) {
   renderUpdate();
   renderDays();
   renderGodown();
-  toast(
-    toRemove.length > 0
-      ? `Removed "${name}" (and ${toRemove.length} from update)`
-      : `Removed "${name}" from ${selectedDay}`
-  );
+  toast(toRemove.length > 0 ? `Removed "${name}" (and ${toRemove.length} from update)` : `Removed "${name}" from ${selectedDay}`);
 };
 
 window.addSelected = function () {
-  let added = 0;
-  let merged = 0;
-  let reverted = 0;
-  let invalid = 0;
-  let overstocked = 0;
+  let added = 0, merged = 0, reverted = 0, invalid = 0, overstocked = 0;
 
   dayCatalog().forEach((name, i) => {
     const ui = catalogUI[i];
@@ -442,8 +490,7 @@ window.addSelected = function () {
   save();
 
   if (added === 0 && merged === 0 && reverted === 0) {
-    if (invalid > 0) toast("Enter a valid positive quantity");
-    else toast("Select items first");
+    toast(invalid > 0 ? "Enter a valid positive quantity" : "Select items first");
     renderCatalog();
     return;
   }
@@ -458,12 +505,7 @@ window.addSelected = function () {
   if (merged)   parts.push(`${merged} merged`);
   if (reverted) parts.push(`${reverted} merged (uncollected)`);
 
-  if (overstocked > 0) {
-    toast(`${parts.join(", ")} · ${overstocked} exceed godown stock`);
-  } else {
-    toast(parts.join(", ") + ` → ${selectedDay}`);
-  }
-
+  toast(overstocked > 0 ? `${parts.join(", ")} · ${overstocked} exceed godown stock` : parts.join(", ") + ` → ${selectedDay}`);
   showPage("update", document.querySelector('.tabs button[data-tab="update"]'));
 };
 
@@ -517,8 +559,7 @@ window.resetDay = function () {
 };
 
 window.selectAllRemaining = function () {
-  let n = 0;
-  let short = 0;
+  let n = 0, short = 0;
   dayItems().forEach(item => {
     if (!item.collected) {
       const res = deductGodown(item.name, item.qty);
@@ -530,13 +571,7 @@ window.selectAllRemaining = function () {
   save();
   renderUpdate();
   renderGodown();
-  if (n) {
-    toast(
-      short > 0
-        ? `Marked ${n} collected (${short} short on stock)`
-        : `Marked ${n} as collected`
-    );
-  }
+  if (n) toast(short > 0 ? `Marked ${n} collected (${short} short on stock)` : `Marked ${n} as collected`);
 };
 
 window.unselectAll = function () {
@@ -560,6 +595,7 @@ function renderUpdate() {
   const total = items.length;
   const collected = items.filter(x => x.collected).length;
   const remaining = total - collected;
+  
   document.getElementById("dayBadge").textContent = selectedDay;
   document.getElementById("statCollected").textContent = collected;
   document.getElementById("statTotal").textContent = total;
@@ -574,20 +610,20 @@ function renderUpdate() {
   const sorted = [...items].sort((a, b) => Number(a.collected) - Number(b.collected));
   list.innerHTML = sorted.map(item => {
     const g = findGodown(item.name);
-    const unitLabel = g ? ` ${g.unit}` : "";
+    const qtyLabel = g ? formatQty(item.qty, g) : `${item.qty}`;
     return `
       <div class="item" style="grid-template-columns:28px 1fr 84px;">
         <input type="checkbox" ${item.collected ? "checked" : ""}
                onchange="toggleCollected('${item.id}', this.checked)">
         <span class="name ${item.collected ? "done" : ""}">${escapeHTML(item.name)}</span>
-        <span class="qty-badge">${item.qty}${escapeHTML(unitLabel)}</span>
+        <span class="qty-badge">${escapeHTML(qtyLabel)}</span>
       </div>
     `;
   }).join("");
 }
 
 /* ============================================================
-   RENDER: GODOWN (with search)
+   RENDER: GODOWN
    ============================================================ */
 function renderGodown() {
   const wrap = document.getElementById("godownList");
@@ -595,9 +631,7 @@ function renderGodown() {
 
   const filter = godownFilter.toLowerCase();
   const visible = filter
-    ? stock.godown
-        .map((g, i) => ({ g, i }))
-        .filter(({ g }) => g.name.toLowerCase().includes(filter))
+    ? stock.godown.map((g, i) => ({ g, i })).filter(({ g }) => g.name.toLowerCase().includes(filter))
     : stock.godown.map((g, i) => ({ g, i }));
 
   const clearBtn = document.getElementById("godownSearchClear");
@@ -627,25 +661,30 @@ function renderGodown() {
 
   const rows = visible.map(({ g, i }) => {
     const inShipment = shipment.some(s => nameKey(s.name) === nameKey(g.name));
+    const totalBase = g.base + g.used;
+    const totalStr  = formatQty(totalBase, g);
+    const usedStr   = formatQty(g.used, g);
+    const availStr  = formatQty(g.base, g);
+
     return `
       <div class="godown-row">
         <span class="g-name">${escapeHTML(g.name)}</span>
-        <span class="g-unit">${escapeHTML(g.unit)}</span>
-        <span class="g-num">${g.base + g.used}</span>
-        <span class="g-num used">${g.used}</span>
-        <span class="g-num avail">${g.base}</span>
-        <button class="btn-del" title="Delete ${escapeAttr(g.name)}"
-                aria-label="Delete ${escapeAttr(g.name)}"
-                onclick="deleteGodownItem(${i})">✕</button>
+        <span class="g-unit">${escapeHTML(g.unit)}${g.packUnit ? ` / ${escapeHTML(g.packUnit)}` : ""}</span>
+        <span class="g-num">${escapeHTML(totalStr)}</span>
+        <span class="g-num used">${escapeHTML(usedStr)}</span>
+        <span class="g-num avail">${escapeHTML(availStr)}</span>
+        <button class="btn-del" title="Delete ${escapeAttr(g.name)}" aria-label="Delete ${escapeAttr(g.name)}" onclick="deleteGodownItem(${i})">✕</button>
         <div class="restock">
-          <input type="number" id="restock${i}" min="1" step="1"
-                 inputmode="numeric" placeholder="Restock qty"
+          <input type="number" id="restock${i}" min="1" step="1" inputmode="numeric" placeholder="Restock qty"
                  onkeydown="if(event.key==='Enter')restockGodown(${i})">
+          <select id="restockUnit${i}">
+            <option value="${g.unit}">${g.unit}</option>
+            ${g.packUnit ? `<option value="${g.packUnit}">${g.packUnit}</option>` : ""}
+          </select>
           <button onclick="restockGodown(${i})">Restock</button>
-          <button class="add-to-shipment ${inShipment ? "added" : ""}"
-                  title="Add ${escapeAttr(g.name)} to shipment"
-                  aria-label="Add ${escapeAttr(g.name)} to shipment"
-                  onclick="toggleShipment('${escapeAttr(g.name)}')">
+          <button onclick="editGodownPack(${i})" title="Set Pack Unit">⚙</button>
+          <button class="add-to-shipment ${inShipment ? "added" : ""}" title="Add ${escapeAttr(g.name)} to shipment"
+                  aria-label="Add ${escapeAttr(g.name)} to shipment" onclick="toggleShipment('${escapeAttr(g.name)}')">
             ${inShipment ? "✓" : "+"}
           </button>
         </div>
@@ -676,8 +715,7 @@ function renderUnitPicker() {
   const wrap = document.getElementById("godownUnitPicker");
   if (!wrap) return;
   wrap.innerHTML = UNITS.map(u => `
-    <button class="${u === selectedUnit ? "active" : ""}"
-            onclick="pickUnit('${u}')">${u}</button>
+    <button class="${u === selectedUnit ? "active" : ""}" onclick="pickUnit('${u}')">${u}</button>
   `).join("");
 }
 
@@ -686,42 +724,87 @@ window.pickUnit = function (u) {
   renderUnitPicker();
 };
 
+window.onGodownPackUnitChange = function () {
+  const unitSel = document.getElementById("godownPackUnit");
+  const sizeEl  = document.getElementById("godownPackSize");
+  if (!unitSel || !sizeEl) return;
+  sizeEl.disabled = !unitSel.value;
+  if (!unitSel.value) sizeEl.value = "";
+};
+
 window.addGodownItem = function () {
   const nameEl = document.getElementById("godownName");
   const qtyEl = document.getElementById("godownQty");
   const name = nameEl.value.trim();
   const qty = Number(qtyEl.value);
   if (!name) { toast("Enter an item name"); return; }
-  if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
-    toast("Enter a valid positive quantity");
-    return;
-  }
-  if (!UNITS.includes(selectedUnit)) { toast("Pick a unit"); return; }
-  if (findGodown(name)) {
-    toast(`"${name}" already in godown — use Restock`);
-    return;
-  }
-  stock.godown.push({ name, unit: selectedUnit, base: qty, used: 0 });
+  if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) { toast("Enter a valid positive quantity"); return; }
+  if (!UNITS.includes(selectedUnit)) { toast("Pick a base unit"); return; }
+  if (findGodown(name)) { toast(`"${name}" already in godown — use Restock`); return; }
+
+  const pu = document.getElementById("godownPackUnit");
+  const ps = document.getElementById("godownPackSize");
+  const packUnit = pu ? pu.value : "";
+  const packSize = ps ? Number(ps.value) : 0;
+  const finalPackUnit = (packUnit && UNITS.includes(packUnit) && packSize >= 2 && packUnit !== selectedUnit) ? packUnit : "";
+  const finalPackSize = finalPackUnit ? Math.floor(packSize) : 0;
+
+  stock.godown.push({ name, unit: selectedUnit, packUnit: finalPackUnit, packSize: finalPackSize, base: qty, used: 0 });
+  
+  weekdays.forEach(d => {
+    const day = stock.days[d];
+    if (day && Array.isArray(day.hidden)) {
+      day.hidden = day.hidden.filter(n => nameKey(n) !== nameKey(name));
+    }
+  });
+
   save();
   nameEl.value = "";
   qtyEl.value = "";
+  if (pu) pu.value = "";
+  if (ps) { ps.value = ""; ps.disabled = true; }
   renderGodown();
-  toast(`Added "${name}" (${qty} ${selectedUnit})`);
+  renderCatalog();
+  toast(`Added "${name}"`);
 };
 
 window.restockGodown = function (i) {
   const g = stock.godown[i];
   if (!g) return;
   const input = document.getElementById(`restock${i}`);
-  const qty = Number(input.value);
-  if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
-    toast("Enter a valid restock quantity");
-    return;
-  }
-  g.base += qty;
+  const unitSel = document.getElementById(`restockUnit${i}`);
+  const raw = Number(input.value);
+  if (!Number.isFinite(raw) || raw <= 0 || !Number.isInteger(raw)) { toast("Enter a valid restock quantity"); return; }
+  const unit = unitSel ? unitSel.value : g.unit;
+  const addBase = toBaseQty(raw, unit, g);
+  g.base += addBase;
   save();
   renderGodown();
-  toast(`Restocked ${qty} ${g.unit}(s) of "${g.name}"`);
+  toast(`Restocked ${formatQty(addBase, g)} of "${g.name}"`);
+};
+
+window.editGodownPack = function (i) {
+  const g = stock.godown[i];
+  if (!g) return;
+  const unitList = UNITS.filter(u => u !== g.unit).join(", ");
+  const pu = prompt(`Pack unit for "${g.name}" (base unit: ${g.unit}).\nLeave blank for none.\nAvailable: ${unitList}`, g.packUnit || "");
+  if (pu === null) return;
+  const packUnit = pu.trim().toLowerCase();
+  if (packUnit === "") {
+    g.packUnit = "";
+    g.packSize = 0;
+    save(); renderGodown(); toast(`Pack cleared for "${g.name}"`); return;
+  }
+  if (!UNITS.includes(packUnit) || packUnit === g.unit) {
+    toast(`Invalid pack unit — must be one of: ${unitList}`); return;
+  }
+  const ps = prompt(`How many ${g.unit} in 1 ${packUnit}?`, g.packSize || "12");
+  if (ps === null) return;
+  const n = Number(ps);
+  if (!Number.isFinite(n) || n < 2 || !Number.isInteger(n)) { toast("Pack size must be a whole number ≥ 2"); return; }
+  g.packUnit = packUnit;
+  g.packSize = Math.floor(n);
+  save(); renderGodown(); toast(`"${g.name}" now packs ${g.packSize} ${g.unit} per ${g.packUnit}`);
 };
 
 window.deleteGodownItem = function (i) {
@@ -729,13 +812,11 @@ window.deleteGodownItem = function (i) {
   if (!g) return;
   if (!confirm(`Delete "${g.name}" from godown?`)) return;
   stock.godown.splice(i, 1);
-  save();
-  renderGodown();
-  toast(`Deleted "${g.name}"`);
+  save(); renderGodown(); toast(`Deleted "${g.name}"`);
 };
 
 /* ============================================================
-   SHIPMENT
+   SHIPMENT + HISTORY
    ============================================================ */
 function renderShipment() {
   const wrap = document.getElementById("shipmentList");
@@ -760,18 +841,18 @@ function renderShipment() {
     return;
   }
 
-  wrap.innerHTML = shipment.map((s, i) => `
-    <div class="shipment-row">
-      <span class="s-name">${escapeHTML(s.name)}</span>
-      <input type="number" min="1" step="1" inputmode="numeric"
-             value="${s.qty}"
-             onchange="updateShipmentQty(${i}, this.value)">
-      <span class="s-qty">${escapeHTML(s.unit)}</span>
-      <button class="btn-del" title="Remove ${escapeAttr(s.name)}"
-              aria-label="Remove ${escapeAttr(s.name)}"
-              onclick="removeShipmentItem(${i})">✕</button>
-    </div>
-  `).join("");
+  wrap.innerHTML = shipment.map((s, i) => {
+    const g = findGodown(s.name);
+    const unitLabel = g ? g.unit : s.unit;
+    return `
+      <div class="shipment-row">
+        <span class="s-name">${escapeHTML(s.name)}</span>
+        <input type="number" min="1" step="1" inputmode="numeric" value="${s.qty}" onchange="updateShipmentQty(${i}, this.value)">
+        <span class="s-qty">${escapeHTML(unitLabel)}</span>
+        <button class="btn-del" title="Remove ${escapeAttr(s.name)}" onclick="removeShipmentItem(${i})">✕</button>
+      </div>
+    `;
+  }).join("");
 
   actions.style.display = "flex";
   actions2.style.display = "flex";
@@ -781,11 +862,7 @@ window.onShipmentMetaInput = function () {
   const supplierEl = document.getElementById("shipmentSupplier");
   const dateEl = document.getElementById("shipmentDate");
   const notesEl = document.getElementById("shipmentNotes");
-  shipmentMeta = {
-    supplier: supplierEl.value.trim(),
-    date: dateEl.value,
-    notes: notesEl.value.trim()
-  };
+  shipmentMeta = { supplier: supplierEl.value.trim(), date: dateEl.value, notes: notesEl.value.trim() };
   save();
 };
 
@@ -800,20 +877,14 @@ window.toggleShipment = function (name) {
     shipment.push({ name, qty: 1, unit: g ? g.unit : "piece" });
     toast(`Added "${name}" to shipment`);
   }
-  save();
-  renderGodown();
-  renderShipment();
+  save(); renderGodown(); renderShipment();
 };
 
 window.updateShipmentQty = function (i, value) {
   const s = shipment[i];
   if (!s) return;
   const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
-    toast("Invalid quantity");
-    renderShipment();
-    return;
-  }
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) { toast("Invalid quantity"); renderShipment(); return; }
   s.qty = n;
   save();
 };
@@ -822,10 +893,7 @@ window.removeShipmentItem = function (i) {
   if (!shipment[i]) return;
   const name = shipment[i].name;
   shipment.splice(i, 1);
-  save();
-  renderGodown();
-  renderShipment();
-  toast(`Removed "${name}" from shipment`);
+  save(); renderGodown(); renderShipment(); toast(`Removed "${name}" from shipment`);
 };
 
 window.clearShipment = function () {
@@ -833,121 +901,63 @@ window.clearShipment = function () {
   if (!confirm("Clear the entire shipment order?")) return;
   shipment = [];
   shipmentMeta = { supplier: "", date: "", notes: "" };
-  save();
-  renderGodown();
-  renderShipment();
-  toast("Shipment cleared");
+  save(); renderGodown(); renderShipment(); toast("Shipment cleared");
 };
 
-/* ============================================================
-   PDF BUILDER
-   ============================================================ */
 function buildShipmentPDF(items, meta, opts = {}) {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({ unit: "pt", format: "a4" });
-  const margin = 48;
-  const pageW = pdf.internal.pageSize.getWidth();
-  const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 48, pageW = pdf.internal.pageSize.getWidth(), pageH = pdf.internal.pageSize.getHeight();
+  const supplier = (meta.supplier || "").trim(), dateStr = meta.date || new Date().toISOString().slice(0, 10);
+  const notes = (meta.notes || "").trim(), isHistory = !!opts.history;
 
-  const supplier = (meta.supplier || "").trim();
-  const dateStr = meta.date || new Date().toISOString().slice(0, 10);
-  const notes = (meta.notes || "").trim();
-  const isHistory = !!opts.history;
-
-  pdf.setFillColor(244, 189, 34);
-  pdf.rect(0, 0, pageW, 70, "F");
-  pdf.setTextColor(0, 0, 0);
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(20);
+  pdf.setFillColor(244, 189, 34); pdf.rect(0, 0, pageW, 70, "F"); pdf.setTextColor(0, 0, 0); pdf.setFont("helvetica", "bold"); pdf.setFontSize(20);
   pdf.text(isHistory ? "SHIPMENT RECORD" : "SHIPMENT ORDER", margin, 42);
-
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(10);
-  const headerRight = isHistory && opts.shippedAt
-    ? `Shipped: ${new Date(opts.shippedAt).toLocaleString()}`
-    : `Date: ${dateStr}`;
+  pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
+  const headerRight = isHistory && opts.shippedAt ? `Shipped: ${new Date(opts.shippedAt).toLocaleString()}` : `Date: ${dateStr}`;
   pdf.text(headerRight, pageW - margin, 30, { align: "right" });
   pdf.text(new Date().toLocaleString(), pageW - margin, 46, { align: "right" });
 
   let y = 100;
-
   if (supplier) {
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(11);
-    pdf.setTextColor(90, 90, 90);
-    pdf.text("TO", margin, y);
-    pdf.setTextColor(0, 0, 0);
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(12);
-    pdf.text(supplier, margin + 40, y);
-    y += 20;
+    pdf.setFont("helvetica", "bold"); pdf.setFontSize(11); pdf.setTextColor(90, 90, 90); pdf.text("TO", margin, y);
+    pdf.setTextColor(0, 0, 0); pdf.setFont("helvetica", "normal"); pdf.setFontSize(12); pdf.text(supplier, margin + 40, y); y += 20;
   }
   if (notes) {
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(11);
-    pdf.setTextColor(90, 90, 90);
-    pdf.text("NOTES", margin, y);
-    pdf.setTextColor(0, 0, 0);
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(11);
-    const noteLines = pdf.splitTextToSize(notes, pageW - margin * 2 - 50);
-    pdf.text(noteLines, margin + 55, y);
-    y += noteLines.length * 14 + 10;
+    pdf.setFont("helvetica", "bold"); pdf.setFontSize(11); pdf.setTextColor(90, 90, 90); pdf.text("NOTES", margin, y);
+    pdf.setTextColor(0, 0, 0); pdf.setFont("helvetica", "normal"); pdf.setFontSize(11);
+    const noteLines = pdf.splitTextToSize(notes, pageW - margin * 2 - 50); pdf.text(noteLines, margin + 55, y); y += noteLines.length * 14 + 10;
   }
 
   y += 14;
+  pdf.setFont("helvetica", "bold"); pdf.setFontSize(11); pdf.setTextColor(90, 90, 90);
+  pdf.text("#", margin, y); pdf.text("ITEM", margin + 30, y);
+  pdf.text("QTY", pageW - margin - 120, y, { align: "right" }); pdf.text("UNIT", pageW - margin - 20, y, { align: "right" });
+  pdf.setDrawColor(200); pdf.line(margin, y + 6, pageW - margin, y + 6); y += 24;
 
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(11);
-  pdf.setTextColor(90, 90, 90);
-  pdf.text("#", margin, y);
-  pdf.text("ITEM", margin + 30, y);
-  pdf.text("QTY", pageW - margin - 120, y, { align: "right" });
-  pdf.text("UNIT", pageW - margin - 20, y, { align: "right" });
-  pdf.setDrawColor(200);
-  pdf.line(margin, y + 6, pageW - margin, y + 6);
-  y += 24;
-
-  pdf.setTextColor(0, 0, 0);
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(12);
+  pdf.setTextColor(0, 0, 0); pdf.setFont("helvetica", "normal"); pdf.setFontSize(12);
   items.forEach((s, i) => {
     if (y > pageH - 80) { pdf.addPage(); y = 60; }
-    pdf.text(String(i + 1), margin, y);
-    pdf.text(String(s.name).slice(0, 60), margin + 30, y);
-    pdf.text(String(s.qty), pageW - margin - 120, y, { align: "right" });
-    pdf.text(s.unit, pageW - margin - 20, y, { align: "right" });
-    y += 22;
-    pdf.setDrawColor(235);
-    pdf.line(margin, y - 12, pageW - margin, y - 12);
+    pdf.text(String(i + 1), margin, y); pdf.text(String(s.name).slice(0, 60), margin + 30, y);
+    pdf.text(String(s.qty), pageW - margin - 120, y, { align: "right" }); pdf.text(s.unit, pageW - margin - 20, y, { align: "right" });
+    y += 22; pdf.setDrawColor(235); pdf.line(margin, y - 12, pageW - margin, y - 12);
   });
 
   const totalQty = items.reduce((sum, s) => sum + s.qty, 0);
-  y += 10;
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(12);
-  pdf.text(`Items: ${items.length}`, margin, y);
-  pdf.text(`Total qty: ${totalQty}`, pageW - margin, y, { align: "right" });
-
+  y += 10; pdf.setFont("helvetica", "bold"); pdf.setFontSize(12);
+  pdf.text(`Items: ${items.length}`, margin, y); pdf.text(`Total qty: ${totalQty}`, pageW - margin, y, { align: "right" });
   return pdf;
 }
 
 function shipmentFileName(prefix = "shipment") {
-  const d = new Date();
-  const pad = n => String(n).padStart(2, "0");
+  const d = new Date(), pad = n => String(n).padStart(2, "0");
   return `${prefix}-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.pdf`;
 }
 
 window.downloadShipmentPDF = function () {
   if (shipment.length === 0) { toast("Shipment is empty"); return; }
-  try {
-    const pdf = buildShipmentPDF(shipment, shipmentMeta);
-    pdf.save(shipmentFileName("shipment"));
-    toast("PDF downloaded");
-  } catch (e) {
-    console.error(e);
-    toast("Failed to generate PDF");
-  }
+  try { buildShipmentPDF(shipment, shipmentMeta).save(shipmentFileName("shipment")); toast("PDF downloaded"); } 
+  catch (e) { console.error(e); toast("Failed to generate PDF"); }
 };
 
 window.shareShipmentPDF = async function () {
@@ -959,55 +969,28 @@ window.shareShipmentPDF = async function () {
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], title: "Shipment Order", text: "Please review the attached shipment order." });
       toast("Shared");
-    } else {
-      pdf.save(shipmentFileName("shipment"));
-      toast("Sharing not supported — downloaded instead");
-    }
-  } catch (e) {
-    if (e.name !== "AbortError") { console.error(e); toast("Share failed"); }
-  }
+    } else { pdf.save(shipmentFileName("shipment")); toast("Sharing not supported — downloaded instead"); }
+  } catch (e) { if (e.name !== "AbortError") { console.error(e); toast("Share failed"); } }
 };
 
-/* ============================================================
-   MARK SHIPPED
-   ============================================================ */
 window.markShipped = async function () {
   if (shipment.length === 0) { toast("Shipment is empty"); return; }
   if (!confirm("Mark this shipment as shipped? Stock will be deducted from the godown and the order moved to history.")) return;
 
   let shortfalls = 0;
-  shipment.forEach(s => {
-    const res = deductGodown(s.name, s.qty);
-    if (res.shortfall > 0) shortfalls++;
-  });
+  shipment.forEach(s => { if (deductGodown(s.name, s.qty).shortfall > 0) shortfalls++; });
 
   const entry = {
-    id: uid(),
-    supplier: shipmentMeta.supplier || "",
-    date: shipmentMeta.date || new Date().toISOString().slice(0, 10),
-    notes: shipmentMeta.notes || "",
-    shippedAt: new Date().toISOString(),
-    items: shipment.map(s => ({ ...s }))
+    id: uid(), supplier: shipmentMeta.supplier || "", date: shipmentMeta.date || new Date().toISOString().slice(0, 10),
+    notes: shipmentMeta.notes || "", shippedAt: new Date().toISOString(), items: shipment.map(s => ({ ...s }))
   };
   shipmentHistory.unshift(entry);
-  shipment = [];
-  shipmentMeta = { supplier: "", date: "", notes: "" };
+  shipment = []; shipmentMeta = { supplier: "", date: "", notes: "" };
 
-  save();
-  renderGodown();
-  renderShipment();
-  renderHistory();
-
-  if (shortfalls > 0) {
-    toast(`Shipped with ${shortfalls} item(s) short on stock`);
-  } else {
-    toast("Marked as shipped");
-  }
+  save(); renderGodown(); renderShipment(); renderHistory();
+  toast(shortfalls > 0 ? `Shipped with ${shortfalls} item(s) short on stock` : "Marked as shipped");
 };
 
-/* ============================================================
-   HISTORY
-   ============================================================ */
 function renderHistory() {
   const wrap = document.getElementById("historyList");
   const badge = document.getElementById("historyCountBadge");
@@ -1016,11 +999,7 @@ function renderHistory() {
   badge.textContent = String(shipmentHistory.length);
 
   if (bulk) bulk.style.display = shipmentHistory.length > 0 ? "flex" : "none";
-
-  if (shipmentHistory.length === 0) {
-    wrap.innerHTML = `<div class="empty">No past shipments yet.</div>`;
-    return;
-  }
+  if (shipmentHistory.length === 0) { wrap.innerHTML = `<div class="empty">No past shipments yet.</div>`; return; }
 
   wrap.innerHTML = shipmentHistory.map(h => {
     const totalQty = h.items.reduce((sum, s) => sum + s.qty, 0);
@@ -1041,11 +1020,9 @@ window.openHistoryModal = function (id) {
   const h = shipmentHistory.find(x => x.id === id);
   if (!h) return;
   activeHistoryId = id;
-
-  document.getElementById("modalTitle").textContent =
-    h.supplier ? `Shipment · ${h.supplier}` : "Shipment";
-
+  document.getElementById("modalTitle").textContent = h.supplier ? `Shipment · ${h.supplier}` : "Shipment";
   const totalQty = h.items.reduce((sum, s) => sum + s.qty, 0);
+  
   const body = `
     <h4>Details</h4>
     <div>Date: ${escapeHTML(h.date || new Date(h.shippedAt).toLocaleDateString())}</div>
@@ -1059,10 +1036,7 @@ window.openHistoryModal = function (id) {
         <span class="m-qty">${s.qty}</span>
         <span class="m-unit">${escapeHTML(s.unit)}</span>
       </div>`).join("")}
-    <div class="m-total">
-      <span>Total</span>
-      <span>${totalQty} qty</span>
-    </div>`;
+    <div class="m-total"><span>Total</span><span>${totalQty} qty</span></div>`;
   document.getElementById("modalBody").innerHTML = body;
   document.getElementById("historyModal").classList.remove("hidden");
 };
@@ -1075,14 +1049,8 @@ window.closeHistoryModal = function () {
 window.downloadHistoryPDF = function () {
   const h = shipmentHistory.find(x => x.id === activeHistoryId);
   if (!h) return;
-  try {
-    const pdf = buildShipmentPDF(h.items, { supplier: h.supplier, date: h.date, notes: h.notes }, { history: true, shippedAt: h.shippedAt });
-    pdf.save(shipmentFileName("shipment-record"));
-    toast("PDF downloaded");
-  } catch (e) {
-    console.error(e);
-    toast("Failed to generate PDF");
-  }
+  try { buildShipmentPDF(h.items, { supplier: h.supplier, date: h.date, notes: h.notes }, { history: true, shippedAt: h.shippedAt }).save(shipmentFileName("shipment-record")); toast("PDF downloaded"); } 
+  catch (e) { console.error(e); toast("Failed to generate PDF"); }
 };
 
 window.shareHistoryPDF = async function () {
@@ -1095,13 +1063,8 @@ window.shareHistoryPDF = async function () {
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], title: "Shipment Record", text: "Shipment record attached." });
       toast("Shared");
-    } else {
-      pdf.save(shipmentFileName("shipment-record"));
-      toast("Sharing not supported — downloaded instead");
-    }
-  } catch (e) {
-    if (e.name !== "AbortError") { console.error(e); toast("Share failed"); }
-  }
+    } else { pdf.save(shipmentFileName("shipment-record")); toast("Sharing not supported — downloaded instead"); }
+  } catch (e) { if (e.name !== "AbortError") { console.error(e); toast("Share failed"); } }
 };
 
 window.deleteHistoryEntry = function () {
@@ -1109,49 +1072,28 @@ window.deleteHistoryEntry = function () {
   if (idx < 0) return;
   if (!confirm("Delete this shipment record? (Godown stock will NOT be restored.)")) return;
   shipmentHistory.splice(idx, 1);
-  save();
-  closeHistoryModal();
-  renderHistory();
-  toast("Record deleted");
+  save(); closeHistoryModal(); renderHistory(); toast("Record deleted");
 };
 
 window.undoShipment = function () {
   const h = shipmentHistory.find(x => x.id === activeHistoryId);
   if (!h) return;
-  if (!confirm(
-    `Undo this shipment?\n\n` +
-    `• Stock will be returned to the godown\n` +
-    `• The history record will be removed\n\n` +
-    `This cannot be undone.`
-  )) return;
-
+  if (!confirm(`Undo this shipment?\n\n• Stock will be returned to the godown\n• The history record will be removed\n\nThis cannot be undone.`)) return;
   h.items.forEach(it => refundGodown(it.name, it.qty));
-
   const idx = shipmentHistory.findIndex(x => x.id === activeHistoryId);
   if (idx >= 0) shipmentHistory.splice(idx, 1);
-
-  save();
-  closeHistoryModal();
-  renderGodown();
-  renderHistory();
-  toast("Shipment undone — stock restored");
+  save(); closeHistoryModal(); renderGodown(); renderHistory(); toast("Shipment undone — stock restored");
 };
 
 window.deleteAllHistory = function () {
   if (shipmentHistory.length === 0) return;
-  if (!confirm(
-    `Delete ALL ${shipmentHistory.length} shipment record(s)?\n\n` +
-    `Godown stock will NOT be restored.\n` +
-    `Use "Undo shipment" on each record first if you want stock back.`
-  )) return;
+  if (!confirm(`Delete ALL ${shipmentHistory.length} shipment record(s)?\n\nGodown stock will NOT be restored.\nUse "Undo shipment" on each record first if you want stock back.`)) return;
   shipmentHistory = [];
-  save();
-  renderHistory();
-  toast("All history deleted");
+  save(); renderHistory(); toast("All history deleted");
 };
 
 /* ============================================================
-   NAVIGATION
+   NAVIGATION & UTIL
    ============================================================ */
 window.showPage = function (page, button) {
   document.getElementById("data").classList.toggle("hidden", page !== "data");
@@ -1161,22 +1103,22 @@ window.showPage = function (page, button) {
   if (button) button.classList.add("active");
 };
 
-/* ============================================================
-   UTIL
-   ============================================================ */
 function escapeHTML(str) {
-  return String(str).replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[c]));
+  return String(str).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
-function escapeAttr(str) {
-  return escapeHTML(str).replace(/`/g, "&#96;");
+function escapeAttr(str) { return escapeHTML(str).replace(/`/g, "&#96;"); }
+
+function populatePackUnitSelects() {
+  const opts = `<option value="">— none —</option>` + UNITS.map(u => `<option value="${u}">${u}</option>`).join("");
+  const el = document.getElementById("godownPackUnit");
+  if (el) el.innerHTML = opts;
 }
 
 /* ============================================================
    INIT
    ============================================================ */
 applyTheme(currentTheme);
+populatePackUnitSelects();
 
 function render() {
   renderDays();
@@ -1201,21 +1143,13 @@ function render() {
       shipmentHistory: incoming.shipmentHistory || []
     };
     if (JSON.stringify(incomingBundle) !== JSON.stringify({
-      ...stock,
-      shipment,
-      shipmentMeta,
-      shipmentHistory
+      ...stock, shipment, shipmentMeta, shipmentHistory
     })) {
       stock = incoming;
       shipment = stock.shipment || [];
       shipmentMeta = stock.shipmentMeta || { supplier: "", date: "", notes: "" };
       shipmentHistory = stock.shipmentHistory || [];
-      renderDays();
-      renderUpdate();
-      renderGodown();
-      renderCatalog();
-      renderShipment();
-      renderHistory();
+      render();
     }
   });
 })();
