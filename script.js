@@ -949,12 +949,22 @@ function renderShipment() {
 
   wrap.innerHTML = shipment.map((s, i) => {
     const g = findGodown(s.name);
-    const unitLabel = g ? g.unit : s.unit;
+    
+    let unitOptions = `<option value="${s.unit}" selected>${s.unit}</option>`;
+    if (g) {
+      unitOptions = `<option value="${g.unit}" ${s.unit === g.unit ? "selected" : ""}>${g.unit}</option>`;
+      if (g.packUnit) {
+        unitOptions += `<option value="${g.packUnit}" ${s.unit === g.packUnit ? "selected" : ""}>${g.packUnit}</option>`;
+      }
+    }
+
     return `
       <div class="shipment-row">
         <span class="s-name">${escapeHTML(s.name)}</span>
         <input type="number" min="1" step="1" inputmode="numeric" value="${s.qty}" onchange="updateShipmentQty(${i}, this.value)">
-        <span class="s-qty">${escapeHTML(unitLabel)}</span>
+        <select class="s-unit-select" onchange="updateShipmentUnit(${i}, this.value)">
+          ${unitOptions}
+        </select>
         <button class="btn-del" title="Remove ${escapeAttr(s.name)}" onclick="removeShipmentItem(${i})">✕</button>
       </div>
     `;
@@ -963,6 +973,13 @@ function renderShipment() {
   actions.style.display = "flex";
   actions2.style.display = "flex";
 }
+
+window.updateShipmentUnit = function (i, unit) {
+  const s = shipment[i];
+  if (!s) return;
+  s.unit = unit;
+  save();
+};
 
 window.onShipmentMetaInput = function () {
   const supplierEl = document.getElementById("shipmentSupplier");
@@ -1084,16 +1101,29 @@ window.markShipped = async function () {
   if (!confirm("Mark this shipment as shipped? Stock will be deducted from the godown and the order moved to history.")) return;
 
   let shortfalls = 0;
-  shipment.forEach(s => { if (deductGodown(s.name, s.qty).shortfall > 0) shortfalls++; });
+  shipment.forEach(s => { 
+    const g = findGodown(s.name);
+    const baseQty = g ? toBaseQty(s.qty, s.unit, g) : s.qty;
+    if (deductGodown(s.name, baseQty).shortfall > 0) shortfalls++; 
+  });
 
   const entry = {
-    id: uid(), supplier: shipmentMeta.supplier || "", date: shipmentMeta.date || new Date().toISOString().slice(0, 10),
-    notes: shipmentMeta.notes || "", shippedAt: new Date().toISOString(), items: shipment.map(s => ({ ...s }))
+    id: uid(), 
+    supplier: shipmentMeta.supplier || "", 
+    date: shipmentMeta.date || new Date().toISOString().slice(0, 10),
+    notes: shipmentMeta.notes || "", 
+    shippedAt: new Date().toISOString(), 
+    items: shipment.map(s => ({ ...s })) 
   };
+  
   shipmentHistory.unshift(entry);
-  shipment = []; shipmentMeta = { supplier: "", date: "", notes: "" };
+  shipment = []; 
+  shipmentMeta = { supplier: "", date: "", notes: "" };
 
-  save(); renderGodown(); renderShipment(); renderHistory();
+  save(); 
+  renderGodown(); 
+  renderShipment(); 
+  renderHistory();
   toast(shortfalls > 0 ? `Shipped with ${shortfalls} item(s) short on stock` : "Marked as shipped");
 };
 
