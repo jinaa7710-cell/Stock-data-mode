@@ -569,6 +569,64 @@ window.toggleCollected = function (id, value) {
   renderGodown();
 };
 
+window.increaseQty = function(id) {
+  const item = dayItems().find(x => x.id === id);
+  if (!item) return;
+  
+  if (item.collected) {
+    refundGodown(item.name, item.qty);
+    item.qty += 1;
+    deductGodown(item.name, item.qty);
+  } else {
+    item.qty += 1;
+  }
+  
+  save();
+  renderUpdate();
+  renderGodown();
+};
+
+window.decreaseQty = function(id) {
+  const item = dayItems().find(x => x.id === id);
+  if (!item || item.qty <= 1) return;
+  
+  if (item.collected) {
+    refundGodown(item.name, item.qty);
+    item.qty -= 1;
+    deductGodown(item.name, item.qty);
+  } else {
+    item.qty -= 1;
+  }
+  
+  save();
+  renderUpdate();
+  renderGodown();
+};
+
+window.directQtyChange = function(id, val) {
+  const item = dayItems().find(x => x.id === id);
+  if (!item) return;
+  
+  const newQty = Number(val);
+  if (!Number.isFinite(newQty) || newQty < 1 || !Number.isInteger(newQty)) {
+    toast("Must be a whole number of 1 or more");
+    renderUpdate();
+    return;
+  }
+  
+  if (item.collected) {
+    refundGodown(item.name, item.qty);
+    item.qty = newQty;
+    deductGodown(item.name, item.qty);
+  } else {
+    item.qty = newQty;
+  }
+  
+  save();
+  renderUpdate();
+  renderGodown();
+};
+
 window.clearCollected = function () {
   const day = currentDay();
   const before = day.items.length;
@@ -648,13 +706,23 @@ function renderUpdate() {
   const sorted = [...items].sort((a, b) => Number(a.collected) - Number(b.collected));
   list.innerHTML = sorted.map(item => {
     const g = findGodown(item.name);
-    const qtyLabel = g ? formatQty(item.qty, g) : `${item.qty}`;
+    const unitLabel = g ? g.unit : "";
+    
+    const qtyControls = `
+      <div class="qty-controls">
+        <button onclick="decreaseQty('${item.id}')" aria-label="Decrease">-</button>
+        <input type="number" min="1" step="1" inputmode="numeric" value="${item.qty}" 
+               onchange="directQtyChange('${item.id}', this.value)">
+        <button onclick="increaseQty('${item.id}')" aria-label="Increase">+</button>
+      </div>
+    `;
+
     return `
-      <div class="item" style="grid-template-columns:28px 1fr 84px;">
+      <div class="item" style="grid-template-columns:28px 1fr auto;">
         <input type="checkbox" ${item.collected ? "checked" : ""}
                onchange="toggleCollected('${item.id}', this.checked)">
-        <span class="name ${item.collected ? "done" : ""}">${escapeHTML(item.name)}</span>
-        <span class="qty-badge">${escapeHTML(qtyLabel)}</span>
+        <span class="name ${item.collected ? "done" : ""}">${escapeHTML(item.name)} <small style="color:var(--text-muted)">${escapeHTML(unitLabel)}</small></span>
+        ${qtyControls}
       </div>
     `;
   }).join("");
