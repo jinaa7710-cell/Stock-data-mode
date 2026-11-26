@@ -324,14 +324,30 @@ input[type=number] { text-align: center; }
 .shipment-meta input { font-size: 14px; text-transform: none; letter-spacing: 0; }
 
 .shipment-row {
-  display: grid; grid-template-columns: 1fr 90px 70px 36px;
+  display: grid; grid-template-columns: 1fr 70px 80px 36px;
   align-items: center; gap: 8px; padding: 10px 0;
   border-bottom: 1px solid var(--border);
 }
 .shipment-row:last-child { border-bottom: 0; }
 .shipment-row .s-name { font-size: 14px; word-break: break-word; }
-.shipment-row .s-qty { text-align: center; font-size: 12px; color: var(--text-muted); }
 .shipment-row input[type=number] { padding: 7px 4px; font-size: 13px; }
+
+.shipment-row select.s-unit-select {
+  width: 100%;
+  text-align: center;
+  text-align-last: center;
+  font-family: inherit;
+  padding: 7px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+  outline: none;
+}
+.shipment-row select.s-unit-select:focus {
+  border-color: var(--gold);
+}
 
 .add-to-shipment {
   background: transparent; color: var(--gold);
@@ -415,6 +431,7 @@ input[type=number] { text-align: center; }
   .shipment-meta { grid-template-columns: 1fr; }
   .modal-foot { flex-direction: column; }
   .pack-picker { grid-template-columns: 1fr; }
+  .shipment-row { grid-template-columns: 1fr 60px 75px 36px; gap: 4px; }
 }
 
 /* ===== Update Qty Controls ===== */
