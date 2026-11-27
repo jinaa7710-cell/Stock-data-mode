@@ -1235,6 +1235,7 @@ window.showPage = function (page, button) {
   document.getElementById("data").classList.toggle("hidden", page !== "data");
   document.getElementById("update").classList.toggle("hidden", page !== "update");
   document.getElementById("godown").classList.toggle("hidden", page !== "godown");
+  document.getElementById("shipment").classList.toggle("hidden", page !== "shipment");
   document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
   if (button) button.classList.add("active");
 };
