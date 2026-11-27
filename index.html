@@ -17,9 +17,10 @@
   </header>
 
   <div class="tabs" role="tablist">
-    <button class="active" data-tab="data" onclick="showPage('data', this)">Daily stock data</button>
-    <button data-tab="update" onclick="showPage('update', this)">Daily stock update</button>
+    <button class="active" data-tab="data" onclick="showPage('data', this)">Daily stock</button>
+    <button data-tab="update" onclick="showPage('update', this)">Daily update</button>
     <button data-tab="godown" onclick="showPage('godown', this)">Godown</button>
+    <button data-tab="shipment" onclick="showPage('shipment', this)">Shipments</button>
   </div>
 
   <div class="days" id="days" role="tablist" aria-label="Select day"></div>
@@ -133,13 +134,16 @@
         </label>
       </div>
     </div>
+  </section>
 
+  <!-- SHIPMENTS (Separated Page) -->
+  <section id="shipment" class="hidden" role="tabpanel">
     <div class="card" id="shipmentCard">
       <h3>
         Shipment order
         <span id="shipmentCountBadge" class="badge">0 items</span>
       </h3>
-      <p class="hint">Select items in the godown list above with the <strong>+</strong> button.</p>
+      <p class="hint">Go to the Godown page and tap the <strong>+</strong> button to add items here.</p>
 
       <div class="shipment-meta">
         <label>
